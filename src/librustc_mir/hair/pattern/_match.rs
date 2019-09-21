@@ -859,7 +859,27 @@ impl<'tcx> IntRange<'tcx> {
             }
             ConstantValue(val) if is_integral(val.ty) => {
                 let ty = val.ty;
-                if let Some(val) = val.try_eval_bits(tcx, param_env, ty) {
+                let size = match ty.sty {
+                    ty::Char => Size::from_bytes(4),
+                    ty::Int(ity) => {
+                        Integer::from_attr(&tcx, SignedInt(ity)).size()
+                    }
+                    ty::Uint(uty) => {
+                        Integer::from_attr(&tcx, UnsignedInt(uty)).size()
+                    }
+                    // per is_integral above
+                    _ => unreachable!(),
+                };
+                // This is purely an optimization -- try_eval_bits is a pretty expensive operation,
+                // as it invokes the layout_of query, but here we know that the type is a primitive,
+                // so we don't need all that complexity (hashing, caching, etc.). As such, try to
+                // skip it.
+                //
+                // FIXME: Is it possible for try_to_bits to fail here? There *are* other variants of
+                // ty::Const, but it seems like they might be impossible to encounter in match
+                // checking...
+                if let Some(val) = val.val.try_to_bits(size)
+                    .or_else(|| val.try_eval_bits(tcx, param_env, ty)) {
                     let bias = IntRange::signed_bias(tcx, ty);
                     let val = val ^ bias;
                     Some(IntRange { range: val..=val, ty })
